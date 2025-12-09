@@ -69,7 +69,7 @@ func createProxyConfig(
 		ReadTimeout:     defaultHTTPTimeout,
 		WriteTimeout:    defaultHTTPTimeout,
 		HTTP3Enabled:    conf.HTTP3,
-		InsecureEnabled: conf.DoHInsecureEnabled,
+		InsecureEnabled: conf.DoHInsecureEnabled || len(conf.HTTPListenPorts) > 0,
 	}
 
 	if uiStr := conf.HTTPSUserinfo; uiStr != "" {
@@ -424,6 +424,13 @@ func (conf *configuration) initListenAddrs(config *proxy.Config) (err error) {
 
 			config.UDPListenAddr = append(config.UDPListenAddr, net.UDPAddrFromAddrPort(addrPort))
 			config.TCPListenAddr = append(config.TCPListenAddr, net.TCPAddrFromAddrPort(addrPort))
+		}
+	}
+
+	for _, ip := range addrs {
+		for _, port := range conf.HTTPListenPorts {
+			a := net.TCPAddrFromAddrPort(netip.AddrPortFrom(ip, port))
+			config.HTTPListenAddr = append(config.HTTPListenAddr, a)
 		}
 	}
 

@@ -54,6 +54,9 @@ type configuration struct {
 	// ListenPorts are the ports server listens on for plain DNS.
 	ListenPorts []uint16 `yaml:"listen-ports"`
 
+	// HTTPListenPorts are the ports server listens on for DNS-over-HTTP.
+	HTTPListenPorts []uint16 `yaml:"http-port"`
+
 	// HTTPSListenPorts are the ports server listens on for DNS-over-HTTPS.
 	HTTPSListenPorts []uint16 `yaml:"https-port"`
 

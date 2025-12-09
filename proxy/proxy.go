@@ -54,6 +54,10 @@ const (
 	// ProtoTLS is the DNS-over-TLS (DoT) protocol.
 	ProtoTLS Proto = "tls"
 
+	// ProtoHTTP identifies unencrypted DoH listeners for Addr and Addrs.
+	// DoH request contexts use ProtoHTTPS for both HTTP and HTTPS listeners.
+	ProtoHTTP Proto = "http"
+
 	// ProtoHTTPS is the DNS-over-HTTPS (DoH) protocol.
 	ProtoHTTPS Proto = "https"
 
@@ -70,7 +74,7 @@ var _ validate.Interface = Proto("")
 // Validate implements the [validate.Interface] for the Proto.
 func (p Proto) Validate() (err error) {
 	switch p {
-	case ProtoTCP, ProtoTLS, ProtoHTTPS, ProtoUDP, ProtoQUIC, ProtoDNSCrypt:
+	case ProtoTCP, ProtoTLS, ProtoHTTP, ProtoHTTPS, ProtoUDP, ProtoQUIC, ProtoDNSCrypt:
 		return nil
 	default:
 		return newBadProtoError(p)
@@ -84,7 +88,7 @@ func newBadProtoError(p Proto) (err error) {
 		"proto: %w: %q, supported: %q",
 		errors.ErrBadEnumValue,
 		p,
-		[]Proto{ProtoTCP, ProtoTLS, ProtoHTTPS, ProtoUDP, ProtoQUIC, ProtoDNSCrypt},
+		[]Proto{ProtoTCP, ProtoTLS, ProtoHTTP, ProtoHTTPS, ProtoUDP, ProtoQUIC, ProtoDNSCrypt},
 	)
 }
 
@@ -188,6 +192,15 @@ type Proxy struct {
 	// httpConf is the configuration for HTTP requests proxying.  Required for
 	// DoH server.  If nil, the DoH server is disabled.
 	httpConf *HTTPConfig
+
+	// httpListen are the listened unencrypted HTTP connections.
+	httpListen []net.Listener
+
+	// httpListenAddr is the set of TCP addresses for unencrypted DoH requests.
+	httpListenAddr []*net.TCPAddr
+
+	// httpServer serves unencrypted DoH queries.
+	httpServer *http.Server
 
 	// httpsListen are the listened HTTPS connections.
 	httpsListen []net.Listener
@@ -399,6 +412,7 @@ func New(c *Config) (p *Proxy, err error) {
 		quicListenAddr:            c.QUICListenAddr,
 		tlsListenAddr:             c.TLSListenAddr,
 		tcpListenAddr:             c.TCPListenAddr,
+		httpListenAddr:            c.HTTPListenAddr,
 		udpListenAddr:             c.UDPListenAddr,
 		fallbacks:                 c.Fallbacks,
 		preferIPv6:                c.PreferIPv6,
@@ -661,6 +675,20 @@ func (p *Proxy) closeListeners(errs []error) (res []error) {
 		p.httpsListen = nil
 	}
 
+	if p.httpServer != nil {
+		res = closeAll(res, p.httpServer)
+		p.httpServer = nil
+	}
+
+	// Server.Close only closes listeners already registered by Serve, which
+	// may not have run yet, especially when startup fails.
+	for _, l := range p.httpListen {
+		if err := l.Close(); err != nil && !errors.Is(err, net.ErrClosed) {
+			res = append(res, err)
+		}
+	}
+	p.httpListen = nil
+
 	if p.h3Server != nil {
 		res = closeAll(res, p.h3Server)
 		p.h3Server = nil
@@ -705,6 +733,8 @@ func (p *Proxy) Addrs(proto Proto) (addrs []net.Addr) {
 		return collectAddrs(p.tcpListen, net.Listener.Addr)
 	case ProtoTLS:
 		return collectAddrs(p.tlsListen, net.Listener.Addr)
+	case ProtoHTTP:
+		return collectAddrs(p.httpListen, net.Listener.Addr)
 	case ProtoHTTPS:
 		return collectAddrs(p.httpsListen, net.Listener.Addr)
 	case ProtoUDP:
@@ -739,6 +769,8 @@ func (p *Proxy) Addr(proto Proto) (addr net.Addr) {
 		return firstAddr(p.tcpListen, net.Listener.Addr)
 	case ProtoTLS:
 		return firstAddr(p.tlsListen, net.Listener.Addr)
+	case ProtoHTTP:
+		return firstAddr(p.httpListen, net.Listener.Addr)
 	case ProtoHTTPS:
 		return firstAddr(p.httpsListen, net.Listener.Addr)
 	case ProtoUDP:

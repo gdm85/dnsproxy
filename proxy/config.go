@@ -114,6 +114,10 @@ type Config struct {
 	// DNS-over-TCP requests.
 	TCPListenAddr []*net.TCPAddr
 
+	// HTTPListenAddr is the set of TCP addresses to listen for unencrypted
+	// DoH requests.  HTTPConfig must be set with InsecureEnabled enabled.
+	HTTPListenAddr []*net.TCPAddr
+
 	// TLSListenAddr is the set of TCP addresses to listen for DNS-over-TLS
 	// requests.
 	TLSListenAddr []*net.TCPAddr
@@ -251,19 +255,19 @@ type HTTPConfig struct {
 	// still can be used as an http.Handler with [Proxy.ServeHTTP].
 	ListenAddresses []netip.AddrPort
 
-	// Routes is the set of routes to handle.  It must be a slice of valid route
-	// patterns, if it is empty, the default routes are registered.  It is
-	// ignored if ListenAddresses is empty.
+	// Routes is the set of routes to handle for HTTP and HTTPS listeners.  It
+	// must be a slice of valid route patterns; if it is empty, the default
+	// routes are registered.
 	Routes []string
 
 	// ReadTimeout is the maximum duration before timing out reads of the
-	// request.  A zero or negative value means there will be no timeout.  It is
-	// ignored if ListenAddresses is empty.
+	// request on HTTP and HTTPS listeners.  A zero or negative value means
+	// there will be no timeout.
 	ReadTimeout time.Duration
 
 	// WriteTimeout is the maximum duration before timing out writes of the
-	// response.  A zero or negative value means there will be no timeout.  It
-	// is ignored if ListenAddresses is empty.
+	// response on HTTP and HTTPS listeners.  A zero or negative value means
+	// there will be no timeout.
 	WriteTimeout time.Duration
 
 	// HTTP3Enabled specifies if HTTP/3 support for HTTPS server.  It is ignored
@@ -313,7 +317,11 @@ func (c *Config) Validate() (err error) {
 		return fmt.Errorf("upstream mode: %w: %q", errors.ErrBadEnumValue, c.UpstreamMode)
 	}
 
-	if c.HTTPConfig != nil && c.HTTPConfig.Userinfo != nil {
+	if c.HTTPListenAddr != nil && c.HTTPConfig == nil {
+		return errors.Error("http listener configuration not found")
+	}
+
+	if c.HTTPConfig != nil && c.HTTPConfig.Userinfo != nil && len(c.HTTPListenAddr) == 0 {
 		return validate.NotEmptySlice("HTTPConfig.ListenAddresses", c.HTTPConfig.ListenAddresses)
 	}
 
@@ -393,6 +401,7 @@ func (p *Proxy) hasListenAddrs() (ok bool) {
 	return p.udpListenAddr != nil ||
 		p.tcpListenAddr != nil ||
 		p.tlsListenAddr != nil ||
+		p.httpListenAddr != nil ||
 		(p.httpConf != nil && p.httpConf.ListenAddresses != nil) ||
 		p.quicListenAddr != nil ||
 		p.dnsCryptUDPListenAddr != nil ||

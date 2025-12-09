@@ -23,12 +23,13 @@ import (
 	"golang.org/x/net/http2"
 )
 
-// listenHTTP creates instances of TLS listeners that will be used to run an
-// HTTP/1.1 and HTTP/2 servers.  It returns the address the listener actually
-// listens to.  addr must not be nil.
+// listenHTTP creates a TCP listener, optionally wrapped in TLS, for HTTP
+// servers.  It returns the address the listener actually listens to.  addr
+// must not be nil.
 func (p *Proxy) listenHTTP(
 	ctx context.Context,
 	addr *net.TCPAddr,
+	withTLS bool,
 ) (ln net.Listener, tcpAddr *net.TCPAddr, err error) {
 	var tcpListen *net.TCPListener
 	err = p.bindWithRetry(ctx, func() (listenErr error) {
@@ -47,14 +48,20 @@ func (p *Proxy) listenHTTP(
 		return nil, nil, fmt.Errorf("bad listener address type: %T", laddr)
 	}
 
-	p.logger.InfoContext(ctx, "listening to https", "addr", tcpAddr)
+	if withTLS {
+		p.logger.InfoContext(ctx, "listening to https", "addr", tcpAddr)
 
-	tlsConfig := p.tlsConf.Clone()
-	tlsConfig.NextProtos = []string{http2.NextProtoTLS, "http/1.1"}
+		tlsConfig := p.tlsConf.Clone()
+		tlsConfig.NextProtos = []string{http2.NextProtoTLS, "http/1.1"}
 
-	tlsListen := tls.NewListener(tcpListen, tlsConfig)
+		tlsListen := tls.NewListener(tcpListen, tlsConfig)
 
-	return tlsListen, tcpAddr, nil
+		return tlsListen, tcpAddr, nil
+	}
+
+	p.logger.InfoContext(ctx, "listening to http", "addr", tcpAddr)
+
+	return tcpListen, tcpAddr, nil
 }
 
 // listenH3 creates instances of QUIC listeners that will be used for running
@@ -85,6 +92,36 @@ func newServerDoH3Config() (conf *quic.Config) {
 	}
 }
 
+// initHTTPListeners creates TCP listeners and a server for unencrypted DoH.
+func (p *Proxy) initHTTPListeners(ctx context.Context) (err error) {
+	if len(p.httpListenAddr) == 0 {
+		return nil
+	}
+
+	mux := http.NewServeMux()
+	p.routeDoH(mux)
+
+	p.httpServer = &http.Server{
+		Handler:           mux,
+		ReadTimeout:       p.httpConf.ReadTimeout,
+		ReadHeaderTimeout: p.httpConf.ReadTimeout,
+		WriteTimeout:      p.httpConf.WriteTimeout,
+	}
+
+	for _, addr := range p.httpListenAddr {
+		p.logger.InfoContext(ctx, "creating an http server")
+
+		ln, _, lErr := p.listenHTTP(ctx, addr, false)
+		if lErr != nil {
+			return fmt.Errorf("failed to start http server on %s: %w", addr, lErr)
+		}
+
+		p.httpListen = append(p.httpListen, ln)
+	}
+
+	return nil
+}
+
 // initHTTPSListeners creates TCP/UDP listeners and HTTP/H3 servers.
 func (p *Proxy) initHTTPSListeners(ctx context.Context) (err error) {
 	httpConf := p.httpConf
@@ -113,7 +150,7 @@ func (p *Proxy) initHTTPSListeners(ctx context.Context) (err error) {
 	for _, addr := range httpConf.ListenAddresses {
 		p.logger.InfoContext(ctx, "creating an https server")
 
-		ln, tcpAddr, lErr := p.listenHTTP(ctx, net.TCPAddrFromAddrPort(addr))
+		ln, tcpAddr, lErr := p.listenHTTP(ctx, net.TCPAddrFromAddrPort(addr), true)
 		if lErr != nil {
 			return fmt.Errorf("failed to start https server on %s: %w", addr, lErr)
 		}

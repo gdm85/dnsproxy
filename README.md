@@ -92,6 +92,8 @@ Usage of ./dnsproxy:
         If specified, use hosts files for resolving.
   --hosts-files=path
         List of paths to the hosts files, can be specified multiple times.
+  --http-port=port/-i port
+        Listening ports for DNS-over-HTTP.
   --http3
         Enable HTTP/3 support.
   --https-port=port/-s port
@@ -265,6 +267,18 @@ Runs a DNS-over-TLS proxy on `127.0.0.1:853`.
 ```shell
 ./dnsproxy -l 127.0.0.1 --tls-port=853 --tls-crt=example.crt --tls-key=example.key -u 8.8.8.8:53 -p 0
 ```
+
+Runs an unencrypted DoH proxy on `127.0.0.1:8080`, for use behind a reverse
+proxy that terminates TLS.  The HTTP listener uses the configured DoH routes
+and authentication settings.
+
+```sh
+./dnsproxy -l 127.0.0.1 --http-port=8080 -u 8.8.8.8:53 -p 0
+```
+
+Library callers can discover HTTP listener addresses with
+`p.Addr(proxy.ProtoHTTP)` and `p.Addrs(proxy.ProtoHTTP)`, including the ports
+assigned when configuring port `0`.  HTTPS listeners use `proxy.ProtoHTTPS`.
 
 Runs a DNS-over-HTTPS proxy on `127.0.0.1:443`.
 
